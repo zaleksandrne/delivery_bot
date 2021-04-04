@@ -27,27 +27,24 @@ updater = Updater(TELEGRAM_TOKEN)
 
 
 def start(update, context):
-    if update.effective_user.id not in USERS:
-        USERS[update.effective_user.id] = {
-            'progress': 0,
+    USERS[update.effective_user.id] = {
+            'progress': 1,
             'derival': '',
             'arrival': ''
             }
-        one(update, context)
-    elif USERS[update.effective_user.id]['progress'] == 1:
-        two(update, context)
-    elif USERS[update.effective_user.id]['progress'] == 2:
-        three(update, context)
-
-
-def one(update: Update, context: CallbackContext):
     bot.send_message(update.effective_message.chat.id,
                      'Введите город отправления посылки'
                      )
-    USERS[update.effective_user.id]['progress'] = 1
 
 
-def two(update: Update, context: CallbackContext):
+def progress(update, context):
+    if USERS[update.effective_user.id]['progress'] == 1:
+        return city(update, context)
+    elif USERS[update.effective_user.id]['progress'] == 2:
+        return result(update, context)
+
+
+def city(update: Update, context: CallbackContext):
     USERS[update.effective_user.id]['derival'] = update['message']['text']
     USERS[update.effective_user.id]['progress'] = 2
     bot.send_message(update.effective_message.chat.id,
@@ -55,7 +52,7 @@ def two(update: Update, context: CallbackContext):
                      )
 
 
-def three(update: Update, context: CallbackContext):
+def result(update: Update, context: CallbackContext):
     USERS[update.effective_user.id]['arrival'] = update['message']['text']
     derival = USERS[update.effective_user.id]['derival'].lower()
     arrival = USERS[update.effective_user.id]['arrival'].lower()
@@ -163,7 +160,7 @@ def main():
     start_handler = CommandHandler('start', start)
     updater.dispatcher.add_handler(start_handler)
     updater.dispatcher.add_handler(CallbackQueryHandler(button))
-    updater.dispatcher.add_handler(MessageHandler(Filters.text, start))
+    updater.dispatcher.add_handler(MessageHandler(Filters.text, progress))
     updater.start_polling()
     updater.idle()
 
