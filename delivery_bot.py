@@ -1,16 +1,11 @@
-import random, os, json, time
-from telegram import Update, Bot, InlineKeyboardMarkup, InlineKeyboardButton
-from telegram.ext import (Updater, CallbackContext,
-                          CallbackQueryHandler, CommandHandler, MessageHandler, Filters)
+import json, os, requests
+
 from dotenv import load_dotenv
-
-import json
-import requests
-
+from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.ext import (CallbackContext, CallbackQueryHandler,
+                          CommandHandler, Filters, MessageHandler, Updater)
 
 load_dotenv()
-
-
 
 
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
@@ -25,11 +20,7 @@ URL_SBER = os.getenv('URL_SBER')
 
 URL_GLAVDOSTAVKA = os.getenv('URL_GLAVDOSTAVKA')
 
-
-
-QUESTION_MEMORY = {}
 USERS = {}
-TIMER_COUNT = 0
 
 bot = Bot(TELEGRAM_TOKEN)
 updater = Updater(TELEGRAM_TOKEN)
@@ -48,95 +39,134 @@ def start(update, context):
     elif USERS[update.effective_user.id]['progress'] == 2:
         three(update, context)
 
-   
-              
-    #USERS[update.effective_user.id] = 1
 
-            
 def one(update: Update, context: CallbackContext):
-    update.message.reply_text('Введите город отправления')
+    bot.send_message(update.effective_message.chat.id,
+                     'Введите город отправления посылки'
+                     )
     USERS[update.effective_user.id]['progress'] = 1
+
 
 def two(update: Update, context: CallbackContext):
     USERS[update.effective_user.id]['derival'] = update['message']['text']
     USERS[update.effective_user.id]['progress'] = 2
-    update.message.reply_text(f'Введите город получателя')
+    bot.send_message(update.effective_message.chat.id,
+                     'Введите город получения посылки'
+                     )
 
 
 def three(update: Update, context: CallbackContext):
     USERS[update.effective_user.id]['arrival'] = update['message']['text']
     derival = USERS[update.effective_user.id]['derival'].lower()
     arrival = USERS[update.effective_user.id]['arrival'].lower()
-    print(derival)
-    print(arrival)
-    
     derival_dellin = requests.post(
         URL_DELLIN_KLADR,
         json={"appkey": DELLIN_KEY,
               "q": derival,
-              "limit":1}
+              "limit": 1}
         )
-    derival_dellin = derival_dellin.json()['cities'][0]['code']
     arrival_dellin = requests.post(
         URL_DELLIN_KLADR,
         json={"appkey": DELLIN_KEY,
               "q": arrival,
-              "limit":1}
+              "limit": 1}
         )
-    arrival_dellin = arrival_dellin.json()['cities'][0]['code']
+    try:
+        derival_dellin = derival_dellin.json().get('cities')[0]['code']
+        arrival_dellin = arrival_dellin.json().get('cities')[0]['code']
+    except IndexError:
+        del USERS[update.effective_user.id]
+        keyboard = [[InlineKeyboardButton(
+            'Новый расчет',
+            callback_data='new'
+            )]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        bot.send_message(update.effective_message.chat.id,
+                         'Ошибка в названии города. Попробуйте еще.',
+                         reply_markup=reply_markup
+                         )
+
     dellin = requests.post(
         URL_DELLIN_CALC,
         json={"appkey": DELLIN_KEY,
               "sessionID": DELLIN_ID,
-              "derival":{"city":derival_dellin},
-              "arrival":{"city":arrival_dellin}
+              "derival": {"city": derival_dellin},
+              "arrival": {"city": arrival_dellin}
               }
     )
+    with open('sber_cities.json', 'r', encoding='utf-8') as g:
+        sber_cities = json.load(g)
+    derival_sber = [city['kladr_id'] for city in sber_cities \
+                    if city.get('name').lower() == derival][0]
+    arrival_sber = [city['kladr_id'] for city in sber_cities \
+                    if city.get('name').lower() == arrival][0]
     sber = requests.post(
         URL_SBER,
         json={"id": "JsonRpcClient.js",
               "jsonrpc": "2.0",
               "method": "calculateShipping",
               "params": {
-                  "stock": 'true',
-                  "kladr_id_from": "77000000000",
-                  "kladr_id": "36000001000",
+                  "stock": True,
+                  "kladr_id_from": derival_sber,
+                  "kladr_id": arrival_sber,
                   "length": 50,
                   "width": 35,
                   "height": 35,
                   "weight": 5,
                   "cod": 0,
                   "declared_cost": 0,
-                  "courier": "shiptor"
+                  "courier": "sberlogistics"
                   }
               }
     )
-
+    sber = sber.json()['result']['methods'][0]
     with open('glav_cities.json', 'r', encoding='utf-8') as g:
         GLAV_CITIES = json.load(g)
-    derival_glav = [city['id'] for city in GLAV_CITIES if city.get('name', '').lower() == derival.lower()][0]
-    arrival_glav = [city['id'] for city in GLAV_CITIES if city.get('name', '').lower() == arrival.lower()][0]
-    print(derival_glav)
+    derival_glav = [city['id'] for city in GLAV_CITIES \
+                    if city.get('name', '').lower() == derival][0]
+    arrival_glav = [city['id'] for city in GLAV_CITIES \
+                    if city.get('name', '').lower() == arrival][0]
     glavdostavka = requests.post(
         URL_GLAVDOSTAVKA + f'&depPoint={derival_glav}&arrPoint={arrival_glav}'
         )
-    glavdostavka = glavdostavka.json()['price']
-    print(glavdostavka)
-
-    
-
+    price_glavdostavka = glavdostavka.json()['price']
     dellin = dellin.json()['data']['terminals_standard']
-    price = dellin['price']
-    period = dellin['period_to']
-    update.message.reply_text(f'Среняя стоимость и сроки доставки от терминала до терминала')
-    update.message.reply_text(f'Деловые линии: {price} руб. до {period} дней.')
-    update.message.reply_text(f'ГлавДоставка: {glavdostavka} руб')
+    price_dellin = dellin['price']
+    period_dellin = dellin['period_to']
+    price_sber = sber['cost']['total']['sum']
+    period_sber = sber['max_days']
+    del USERS[update.effective_user.id]
+    keyboard = [[InlineKeyboardButton('Новый расчет', callback_data='new')]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    derival = derival[0].upper() + derival[1:]
+    arrival = arrival[0].upper() + arrival[1:]
 
-    USERS[update.effective_user.id]['progress'] = 0
+    bot.send_message(update.effective_message.chat.id,
+                     f'Стоимость и сроки доставки посылки с габаритами '
+                     f'не превышающими 0.5х0.35х0.35(м) и массой не более 5кг '
+                     f'из города {derival} в город {arrival} '
+                     f'(от терминала до терминала):\n\n'
+                     f'Деловые линии: {price_dellin} руб. '
+                     f'До {period_dellin} дней.\n'
+                     f'СберЛогистика: {price_sber} руб. '
+                     f'До {period_sber} дней.\n'
+                     f'ГлавДоставка: {price_glavdostavka} руб',
+                     reply_markup=reply_markup
+                     )
 
 
-start_handler = CommandHandler('start', start)
-updater.dispatcher.add_handler(start_handler)
-updater.dispatcher.add_handler(MessageHandler(Filters.text, start))
-updater.start_polling()
-updater.idle()
+def button(update: Update, context: CallbackContext):
+    start(update, context)
+
+
+def main():
+    start_handler = CommandHandler('start', start)
+    updater.dispatcher.add_handler(start_handler)
+    updater.dispatcher.add_handler(CallbackQueryHandler(button))
+    updater.dispatcher.add_handler(MessageHandler(Filters.text, start))
+    updater.start_polling()
+    updater.idle()
+
+
+if __name__ == '__main__':
+    main()
