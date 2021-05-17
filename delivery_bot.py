@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import json, os, requests
 
 from dotenv import load_dotenv
